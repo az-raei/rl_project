@@ -1,0 +1,23 @@
+users:
+  temperature: 0.5                 # BT temperature T: P(i > j) = sigmoid((r_i - r_j) / T)
+  num_train: 50
+  num_test_per_level: 20           # unseen users per heterogeneity level
+
+  # Reward of user u on a segment: r_u = v_u . psi_std. Each v_u is rescaled so r_u has unit std over
+  # the train segment pool, which makes T mean the same thing for every user.
+  # Nominal preference direction (order = FEATURE_NAMES): progress+, distance-, duration-(faster),
+  # action_mag-(gentle), smoothness+, success+
+  centroid: [1.0, -1.0, -0.5, -0.5, 0.5, 1.0]
+  train_spread: 0.25               # train users: v = c + spread * N(0, I)
+
+  # Unseen-user proposal: v = a * c + noise * N(0, I), a ~ U(a_range). Keep a >= 0: a < 0 makes mostly
+  # reversed preferences, which is a stress test rather than 'more heterogeneous'.
+  unseen_proposal: {a_range: [0.0, 5.0], noise: 1.0}
+
+  # Heterogeneity of a user = 1 - Spearman(r_u, r_centroid) over the train segment pool
+  # (0 = same ranking as the centroid, 1 = unrelated, 2 = reversed).
+  heterogeneity:
+    thresholds: train              # train | tertiles | [t1, t2]  (see src/users/synthetic_users.py)
+    low_quantile: 0.9              # for thresholds=train: t1 = this quantile of train users' distances
+    num_candidates: 6000
+    num_reference_segments: 1000

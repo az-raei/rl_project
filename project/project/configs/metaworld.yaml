@@ -1,0 +1,17 @@
+env:
+  id: Meta-World/MT1
+  render: false
+  disable_checker: true            # silence Gymnasium's harmless 'obs not within observation space' warning
+
+collect:
+  episodes_per_behavior: 200
+  stop_after_success: 10           # -1 = run all 500 steps (mostly post-success hovering); N = stop N steps after first success
+  max_steps: null                  # null = env default (500); N = truncate every episode at N steps
+  # sigma: std of Gaussian noise on expert action; eps: per-step prob. of a uniform-random action
+  behaviors:
+    expert:           {kind: expert, sigma: 0.0, eps: 0.0}
+    expert_noise_0.1: {kind: expert, sigma: 0.1, eps: 0.0}
+    expert_noise_0.3: {kind: expert, sigma: 0.3, eps: 0.0}
+    expert_noise_0.6: {kind: expert, sigma: 0.6, eps: 0.0}
+    expert_eps_0.3:   {kind: expert, sigma: 0.0, eps: 0.3}
+    random:           {kind: random, sigma: 0.0, eps: 0.0}

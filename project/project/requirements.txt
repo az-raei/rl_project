@@ -1,0 +1,7 @@
+numpy
+pyyaml
+gymnasium
+mujoco>=3.0
+metaworld        # or: pip install "git+https://github.com/Farama-Foundation/Metaworld.git@master#egg=metaworld"
+torch            # needed from the model-training stage onward
+pytest

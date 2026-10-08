@@ -1,0 +1,12 @@
+# Fixed ONCE and shared by every reward-model variant (PrefMMT, stats-MLP, ours, ground truth).
+iql:
+  hidden_dims: [256, 256]
+  lr: 3.0e-4
+  discount: 0.99
+  expectile: 0.7
+  beta: 3.0                        # AWR inverse temperature
+  tau: 0.005                       # target-network EMA rate
+  batch_size: 256
+  total_steps: 500000
+  eval_every: 10000
+  eval_episodes: 20

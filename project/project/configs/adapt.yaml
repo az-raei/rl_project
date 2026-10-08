@@ -1,0 +1,6 @@
+adapt:
+  checkpoint: null                 # null = checkpoints/<run_id>.pt for the current model/train config
+  num_seeds: 5                     # independent query orders per user
+  l2: 0.1                          # ridge strength on scaled features; NOT tuned on unseen users
+  query_pool_split: 0              # candidate pairs queried from this split (train)
+  eval_split: 2                    # pairs / segments used for metrics (test: unseen episodes)

@@ -1,0 +1,6 @@
+query:
+  budgets: [5, 10, 20, 50, 100]    # nested: budget B_k contains all labels of B_{k-1}
+  strategies: [random, ensemble]
+  ensemble_size: 5
+  candidate_pool_size: 2000        # candidate pairs scored per acquisition step
+  batch_size: 1                    # pairs acquired per round

@@ -1,0 +1,18 @@
+model:
+  K: 16                            # reward-feature dimension. Ablate over {8, 16, 32}; see note on K=4 in README
+  d_model: 128
+  temporal: transformer            # transformer | gru | mlp  (mlp = per-step, no temporal context)
+  n_layers: 2
+  n_heads: 4                       # transformer only
+  dropout: 0.1
+  max_len: 128                     # must be >= segments.length
+
+train:
+  device: auto
+  batch_size: 256
+  steps: 20000
+  lr: 3.0e-4
+  weight_decay: 1.0e-4             # shared parameters only (user weights are not decayed)
+  grad_clip: 1.0
+  eval_every: 1000
+  tag: ""                          # appended to the run id, e.g. for sweeps

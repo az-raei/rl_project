@@ -1,0 +1,6 @@
+# PLACEHOLDER. Fill architecture/loss details from the PrefMMT paper / official code, not from memory.
+prefmmt:
+  variant: pooled                  # pooled | pooled_finetune (per-user fine-tuning on B labels)
+  lr: 3.0e-4
+  epochs: 50
+  batch_size: 128

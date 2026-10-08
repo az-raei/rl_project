@@ -1,0 +1,30 @@
+seed: 0
+tasks: [reach-v3, pick-place-v3]
+
+paths:
+  raw: data/raw
+  trajectories: data/trajectories
+  pairs: data/pairs
+  users: data/users
+  checkpoints: checkpoints
+  results: results
+
+# Fixed-length segments are the unit that preferences are given over.
+segments:
+  length: 25
+  stride: 5                        # < length gives overlapping segments (within an episode only)
+  split: {train: 0.7, val: 0.1, test: 0.2}   # split by EPISODE, stratified by behavior policy
+  # Cap on segments kept per behavior policy (null = keep all). Applied per split in proportion to
+  # `split`, so e.g. 1000 -> 700 train / 100 val / 200 test per behavior. Stops long-running or
+  # never-succeeding behaviors (e.g. random) from dominating the segment pool.
+  max_per_behavior: 1000
+
+# Candidate pair pools (user-agnostic; labels come from synthetic users later).
+pairs:
+  per_split: {train: 20000, val: 2000, test: 5000}
+  allow_same_episode: false
+
+# psi(tau): behavioral statistics. Used for synthetic labels + evaluation ONLY, never as model input.
+features:
+  hand_slice: [0, 3]               # end-effector xyz inside the 39-D Meta-World observation
+  distance_eps: 1.0e-3             # floor on the initial goal distance when normalizing progress
