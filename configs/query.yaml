@@ -1,0 +1,8 @@
+query:
+  budgets: [5, 10, 20, 50, 100]    # nested: budget B_k contains all labels of B_{k-1}
+  strategies: [random]             # random | ensemble_variance | entropy  (active ones need ensemble_seeds trained)
+  ensemble_size: 5
+  ensemble_seeds: [0, 1, 2, 3, 4]   # the model seed (default 0) is the primary; the others are trained with seed=<s>
+  active_seeds: 3                  # query orders per user for active strategies (they are slower than random)
+  candidate_pool_size: 2000        # candidate pairs scored per acquisition step
+  batch_size: 5                    # pairs acquired per round (1 = fully sequential, ~5x slower)

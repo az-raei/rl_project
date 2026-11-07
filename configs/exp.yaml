@@ -1,0 +1,8 @@
+exp:
+  steps: 6000                      # upper bound on training steps per reward model; early stopping (train.early_stop_patience) usually ends sooner
+  dry_run: false                   # true: print the commands only
+  extra: []                        # extra "key=value" overrides appended to EVERY command (e.g. paths.* on Kaggle)
+  k_values: [4, 6, 8, 16, 32]
+  temporal_values: [gru, mlp]
+  l2_values: [0.1, 1, 10, 100]
+  ensemble_seeds: [1, 2, 3, 4]     # extra seeds trained for the ensemble (seed 0 is the primary)

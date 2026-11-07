@@ -1,0 +1,24 @@
+model:
+  encoder: ours                   # ours | prefmmt (hierarchical state/action transformer, see src/models/prefmmt_baseline.py)
+  K: 16                            # reward-feature dimension. Ablate over {8, 16, 32}; see note on K=4 in README
+  d_model: 128
+  temporal: transformer            # transformer | gru | mlp  (mlp = per-step, no temporal context)
+  n_layers: 2
+  n_heads: 4                       # transformer only
+  dropout: 0.1
+  stats_hidden: 128                # hidden width of the trajectory-statistics MLP baseline
+  max_len: 128                     # must be >= segments.length
+  prefmmt: {n_intra: 3, n_inter: 3}   # only for encoder=prefmmt; n_inter=0 -> PrefIntra, n_intra=0 -> PrefInter
+
+train:
+  device: auto
+  batch_size: 256
+  steps: 6000                      # upper bound; early stopping usually ends the run sooner
+  lr: 3.0e-4
+  weight_decay: 1.0e-4             # shared parameters only (user weights are not decayed)
+  grad_clip: 1.0
+  eval_every: 1000
+  early_stop_patience: 3           # stop after this many evals without a val-acc gain > min_delta (0 = off)
+  min_delta: 0.001
+  pooled: false                    # true: one shared user weight (the original single-reward PrefMMT setup; use K=1)
+  tag: ""                          # appended to the run id, e.g. for sweeps
