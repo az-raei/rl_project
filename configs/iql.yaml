@@ -1,0 +1,19 @@
+# Fixed ONCE and shared by every reward variant (env reward, population, PrefMMT pooled, ours).
+iql:
+  hidden_dims: [256, 256]
+  lr: 3.0e-4
+  discount: 0.99
+  expectile: 0.7
+  beta: 3.0                        # AWR inverse temperature
+  tau: 0.005                       # target-network EMA rate
+  batch_size: 256
+  total_steps: 100000              # ~2 min on a T4. The IQL paper-scale setting is 1e6.
+  eval_episodes: 10
+  max_steps: 500
+  iql_seeds: 1                     # independent IQL runs per reward variant
+  # which personalized policies to train (each is one IQL run):
+  users_per_group: 2               # unseen users per heterogeneity level
+  budgets: [20, 100]
+  strategies: [random]             # random | ensemble_variance | entropy
+  prior: population                # zero | population
+  include_prefmmt_pooled: true     # needs a pooled PrefMMT checkpoint (K=1, train.pooled=true)
