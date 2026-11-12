@@ -213,7 +213,7 @@ def test_iql_summary_lines():
         for variant, b, strat, gt in (("population", 0, "", 0.0), ("ours", 20, "random", 0.5)):
             rows.append(dict(variant=variant, budget=b, strategy=strat, group=g, user=u, gt_reward=gt, success=1.0, env_return=1.0))
     lines = summarize_iql(rows)
-    assert len(lines) == 3 and "+0.500" in lines[2] and "ours" in lines[2]
+    assert len(lines) == 3 and "+0.500" in lines[2] and "ours" in lines[2] and lines[2].rstrip().endswith("1/1/1")
 
 
 # ---- torch ----------------------------------------------------------------------------------------
@@ -294,3 +294,110 @@ def test_full_pipeline_on_fake_data(tmp_path):
     assert next(tdir.glob("fake-v3_K4_statsmlp_seed0_adapt_l2*.csv"))
     report.run(cfg)
     assert (tdir / "summary_adapt_fake-v3.md").exists()
+
+
+def test_iql_result_rows_roundtrip_and_job_keys(tmp_path):
+    from src.rl.run_iql import job_key, load_rows, write_rows
+    base = dict(task="t", group="low", gt_reward=0.5, success=1.0, env_return=3.0)
+    rows = [dict(base, variant="population", user=5, budget=0, strategy="", iql_seed=0),
+            dict(base, variant="ours", user=7, group="high", gt_reward=-0.2, budget=100, strategy="random", iql_seed=0),
+            dict(base, variant="ref_random", user=5, budget=-1, strategy="")]
+    p = tmp_path / "x_iql.csv"
+    assert load_rows(p) == []
+    write_rows(p, rows)
+    back = load_rows(p)
+    assert back[1]["user"] == 7 and isinstance(back[1]["budget"], int) and back[1]["gt_reward"] == -0.2
+    keys = {job_key(r["variant"], r["budget"], r["strategy"], r["user"]) for r in back}
+    assert job_key("population", 0, "", 123) in keys and job_key("ref_random", -1, "") in keys   # user independent
+    assert job_key("ours", 100, "random", 7) in keys
+    assert job_key("ours", 100, "random", 8) not in keys and job_key("ours", 20, "random", 7) not in keys
+    write_rows(p, back + [dict(base, variant="ours", user=8, budget=100, strategy="random", iql_seed=0)])
+    assert len(load_rows(p)) == 4 and not (tmp_path / "x_iql.csv.tmp").exists()
+
+
+def test_oracle_rewards_match_the_evaluation_metric_and_paired_report():
+    from _fake_data import make_fake_raw
+    from src.rl.evaluate_policy import episode_psi
+    from src.rl.run_iql import oracle_step_rewards, paired_lines, window_psi_std
+    raw = make_fake_raw(n_eps=3, T=120)
+    starts, lengths = np.array([0, 120, 240]), np.array([120, 120, 120])
+    idx, own = tile_windows(starts, lengths, 40)
+    psi_mean, psi_std = np.array([0.1, 0, 0.5, 1, 0, 0.3]), np.array([1.0, 2, 1, 1, 0.5, 1])
+    v = np.array([1.0, -0.5, 0.2, -0.3, 0.7, 1.0])
+    r = oracle_step_rewards(window_psi_std(raw, starts, lengths, idx, psi_mean, psi_std), v, idx, own, len(raw["rewards"]))
+    for e in range(3):                                   # per-episode mean step reward == evaluate_policy's episode score
+        sl = slice(e * 120, (e + 1) * 120)
+        ep = dict(obs=raw["observations"][sl].astype(float), act=raw["actions"][sl].astype(float),
+                  success=raw["success"][sl].astype(float), dist=raw["obj_to_target"][sl].astype(float), rew=np.zeros(120))
+        score = (((episode_psi(ep, 40) - psi_mean) / psi_std) @ v).mean()
+        assert np.isclose(r[sl].mean(), score)
+    rows = []
+    for u, g in ((1, "low"), (2, "low"), (3, "low")):
+        for variant, budget, gt in (("population", 0, 0.0), ("ours", 20, 0.4 + 0.1 * u), ("oracle", -1, 1.0)):
+            rows.append(dict(variant=variant, budget=budget, strategy="random" if variant == "ours" else "", group=g,
+                             user=u, gt_reward=gt, success=1.0, env_return=1.0))
+    lines = paired_lines(rows)
+    assert any("vs population" in l and "+0.600" in l and "wins 3/3" in l for l in lines)
+    assert any("vs oracle" in l and "wins 0/3" in l for l in lines)
+
+
+def test_select_users_by_group():
+    from src.rl.run_iql import select_users
+    group = np.array([0] * 4 + [1] * 3 + [2] * 3 + [3] * 3)
+    assert select_users(group, 2) == [4, 5, 7, 8, 10, 11]
+    assert select_users(group, 2, ["high"]) == [10, 11] and select_users(group, 5, [1, 2]) == [4, 5, 6, 7, 8, 9]
+
+
+def test_evaluate_actor_keeps_observation_and_action_windows():
+    from src.rl.evaluate_policy import evaluate_actor
+    ev = evaluate_actor(_FakeEnv(), lambda o: np.zeros(4), 2, 25, np.zeros(6), np.ones(6), keep_windows=True)
+    assert len(ev["obs_windows"]) == 2 and ev["obs_windows"][0].shape == (1, 25, 39) and ev["act_windows"][0].shape == (1, 25, 4)
+    assert "obs_windows" not in evaluate_actor(_FakeEnv(), lambda o: np.zeros(4), 1, 25, np.zeros(6), np.ones(6))
+    ev = evaluate_actor(_FakeEnv(success_at=70), lambda o: np.zeros(4), 1, 25, np.zeros(6), np.ones(6), keep_windows=True)
+    assert ev["obs_windows"][0].shape == (3, 25, 39) and ev["psi"][0].shape == (3, 6)       # 80 steps -> 3 full windows
+
+
+def test_make_scorer_standardizes_like_the_true_reward_and_exploit_report():
+    from src.rl.run_iql import exploit_lines, make_scorer
+    norm = dict(obs_mean=np.zeros(39), obs_std=np.ones(39), act_mean=np.zeros(4), act_std=np.ones(4))
+    phi_fn = lambda o, a: np.stack([o.sum(axis=(1, 2)), a.sum(axis=(1, 2))], axis=1)       # fake (W, K=2) features
+    w, scale = np.array([1.0, -0.5]), 2.0
+    rng = np.random.default_rng(0)
+    train_proj = rng.normal(3.0, 2.0, size=500)                                           # its mean 3 / std 2 define the scale
+    ev = dict(obs_windows=[np.ones((2, 5, 39))], act_windows=[np.ones((2, 5, 4))])
+    got = make_scorer(phi_fn, w, scale, train_proj, norm)(ev)["windows"][0]
+    want = (((np.array([195.0, 20.0]) / scale) @ w) - train_proj.mean()) / (train_proj.std() + 1e-8)
+    assert got.shape == (2,) and np.allclose(got, want)
+    base = dict(variant="ours", budget=100, strategy="random", group="high", success=1.0, env_return=1.0)
+    rows = [dict(base, user=u, gt_reward=-0.5, learned_reward=1.0, exploit_gap=1.5, window_corr=0.1) for u in (1, 2, 3)]
+    rows.append(dict(variant="env_reward", budget=-1, strategy="", group="high", user=1, gt_reward=0.0, success=1.0, env_return=1.0))
+    lines = exploit_lines(rows)
+    assert any(l.strip().startswith("ours") and "+1.500" in l and "high" in l for l in lines)
+    assert not any(l.strip().startswith("env_reward") for l in lines)                      # no learned reward for it
+    assert "no rows" in exploit_lines([rows[-1]])[0]
+
+
+def test_load_rows_converts_learned_columns_and_accepts_old_files(tmp_path):
+    from src.rl.run_iql import load_rows, write_rows
+    old = dict(task="t", variant="ours", user=1, group="low", gt_reward=0.5, success=1.0, env_return=1.0, budget=20, strategy="random", iql_seed=0)
+    new = dict(old, user=2, learned_reward=0.9, exploit_gap=0.4, window_corr=0.3)
+    p = tmp_path / "x_iql.csv"
+    write_rows(p, [old, new])
+    back = load_rows(p)
+    assert np.isnan(back[0]["learned_reward"]) and back[1]["learned_reward"] == 0.9 and back[1]["window_corr"] == 0.3
+
+
+def test_report_spearman_and_seed_summary(tmp_path):
+    from src.experiments import report
+    tdir = tmp_path / "results" / "tables"; tdir.mkdir(parents=True)
+    for seed, acc in ((0, 0.70), (1, 0.74), (2, 0.78)):
+        _write_adapt_csv(tdir / f"reach-v3_K16_transformer_seed{seed}_adapt_l20.1.csv", "ours-transformer-K16", "ours_pop_prior", "random", {5: acc, 20: acc + 0.1})
+    rows = report.load_adapt_tables(tdir)
+    md = report.seed_summary(rows, "reach-v3", [5, 20])
+    assert "reach-v3_K16_transformer_seedX" in md and "| 3 |" in md             # 3 seeds grouped under one base name
+    assert "0.745 ± 0.040" in md and "0.765 ± 0.040" in md                       # low/high users averaged first, then sd over seeds .04
+    assert "No configuration" in report.seed_summary([r for r in rows if "seed0" in r["run"]], "reach-v3", [5, 20])
+    cfg = deep_update(load_config(["default"]), {"paths": {"results": str(tmp_path / "results")}})
+    report.run(cfg)
+    assert (tdir / "summary_spearman_reach-v3.md").exists() and (tdir / "summary_seeds_reach-v3.md").exists()
+    assert "Spearman" in (tdir / "summary_spearman_reach-v3.md").read_text()

@@ -48,8 +48,13 @@ def aggregate(rows, metric="acc_true") -> dict:
     return out
 
 
-def markdown_tables(task, agg, budgets) -> str:
-    lines = [f"# {task}: preference accuracy vs ground truth (acc_true), mean ± s.e. over unseen users\n"]
+METRIC_TITLES = {"acc_true": "preference accuracy vs ground truth (acc_true)",
+                 "spearman": "reward recovery: Spearman(w.phi, v.psi) on test segments"}
+SEED_RE = re.compile(r"_seed\d+")
+
+
+def markdown_tables(task, agg, budgets, metric="acc_true") -> str:
+    lines = [f"# {task}: {METRIC_TITLES.get(metric, metric)}, mean ± s.e. over unseen users\n"]
     for g in GROUPS:
         lines += [f"\n## {g} heterogeneity\n", "| run | l2 | method | strategy | " + " | ".join(f"B={b}" for b in budgets) + " |",
                   "|---|---|---|---|" + "---|" * len(budgets)]
@@ -60,9 +65,49 @@ def markdown_tables(task, agg, budgets) -> str:
     return "\n".join(lines) + "\n"
 
 
+def seed_summary(rows, task, budgets, metrics=("acc_true", "spearman")) -> str:
+    """Mean +/- s.d. ACROSS TRAINING SEEDS for configs that exist for >= 2 seeds (runs that differ only by `_seed<k>`).
+
+    Each seed's value is first averaged over unseen users, so this measures model-training variability.
+    """
+    lines = [f"# {task}: variability across training seeds (mean ± s.d. over seeds; each seed averaged over unseen users)\n"]
+    for metric in metrics:
+        per_user = defaultdict(list)
+        for r in rows:
+            strat = "" if r["method"] in ("population", "pooled_population") else r["strategy"]
+            base = SEED_RE.sub("_seedX", r["run"])
+            seed = int(re.search(r"_seed(\d+)", r["run"]).group(1)) if re.search(r"_seed(\d+)", r["run"]) else 0
+            per_user[(base, r["l2"], r["method"], strat, r["group"], r["budget"], seed, r["user"])].append(r[metric])
+        per_seed = defaultdict(list)
+        for (base, l2, meth, strat, g, b, seed, u), v in per_user.items():
+            per_seed[(base, l2, meth, strat, g, b, seed)].append(float(np.mean(v)))
+        cell = defaultdict(list)
+        for (base, l2, meth, strat, g, b, seed), v in per_seed.items():
+            cell[(base, l2, meth, strat, g, b)].append(float(np.mean(v)))
+        keys = sorted({k[:5] for k, v in cell.items() if len(v) >= 2})
+        lines.append(f"\n## {METRIC_TITLES.get(metric, metric)}\n")
+        if not keys:
+            lines.append("No configuration has results for two or more training seeds yet "
+                         "(adapt models trained with seed=1,2,... to get them).\n")
+            continue
+        lines += ["| run | l2 | method | strategy | group | seeds | " + " | ".join(f"B={b}" for b in budgets) + " |",
+                  "|---|---|---|---|---|---|" + "---|" * len(budgets)]
+        for base, l2, meth, strat, g in keys:
+            cells, n_seeds = [], 0
+            for b in budgets:
+                v = cell.get((base, l2, meth, strat, g, b))
+                if v:
+                    n_seeds = max(n_seeds, len(v))
+                cells.append(f"{np.mean(v):.3f} ± {np.std(v, ddof=1):.3f}" if v and len(v) > 1 else "")
+            lines.append(f"| {base} | {l2} | {meth} | {strat} | {g} | {n_seeds} | " + " | ".join(cells) + " |")
+    return "\n".join(lines) + "\n"
+
+
 def load_iql_tables(table_dir) -> dict:
     out = {}
-    for p in sorted(Path(table_dir).glob("*_iql.csv")):
+    for p in sorted(Path(table_dir).glob("*_iql*.csv")):
+        if ".previous" in p.name:
+            continue
         with open(p) as f:
             rows = list(csv.DictReader(f))
         for r in rows:
@@ -114,6 +159,10 @@ def run(cfg) -> None:
         md = markdown_tables(task, agg, budgets)
         (res / "tables").mkdir(parents=True, exist_ok=True)
         (res / "tables" / f"summary_adapt_{task}.md").write_text(md)
+        (res / "tables" / f"summary_spearman_{task}.md").write_text(
+            markdown_tables(task, aggregate(sub, "spearman"), budgets, "spearman"))
+        (res / "tables" / f"summary_seeds_{task}.md").write_text(seed_summary(sub, task, budgets))
+        log.info(f"[{task}] wrote summary_spearman_{task}.md and summary_seeds_{task}.md")
         ok = plot_acc_vs_budget(task, agg, budgets, res / "figures" / f"acc_vs_budget_{task}.png")
         log.info(f"[{task}] wrote summary_adapt_{task}.md" + (" and the figure" if ok else " (no matplotlib: no figure)"))
         print(md)

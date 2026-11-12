@@ -31,26 +31,39 @@ def rollout(env, act_fn, max_steps: int = 500, stop_after_success: int = 10) -> 
     return {k: np.asarray(v, dtype=np.float64) for k, v in rec.items()}
 
 
+def window_index(T: int, L: int) -> np.ndarray:
+    """(W, Lw) step indices of the non-overlapping length-L windows of an episode of T steps (one short window if T < L)."""
+    starts = list(range(0, T - L + 1, L)) or [0]
+    return np.asarray(starts)[:, None] + np.arange(min(L, T))[None]
+
+
 def episode_psi(ep: dict, L: int, hand_slice=(0, 3), eps: float = 1e-3) -> np.ndarray:
     """Raw psi of the non-overlapping length-L windows of one episode, (W, 6). Short episodes: one window."""
-    T = len(ep["rew"])
     h0, h1 = hand_slice
-    starts = list(range(0, T - L + 1, L)) or [0]
-    Lw = min(L, T)
-    idx = np.asarray(starts)[:, None] + np.arange(Lw)[None]
+    idx = window_index(len(ep["rew"]), L)
     return segment_features(ep["obs"][:, h0:h1][idx], ep["act"][idx], ep["success"][idx], ep["dist"][idx],
-                            np.full(len(starts), ep["dist"][0]), eps)
+                            np.full(len(idx), ep["dist"][0]), eps)
 
 
 def evaluate_actor(env, act_fn, n_episodes: int, L: int, psi_mean, psi_std, hand_slice=(0, 3), eps: float = 1e-3,
-                   max_steps: int = 500, stop_after_success: int = 10) -> dict:
-    """Standardized psi windows per episode (so ANY user can score the same rollouts later) + task metrics."""
-    psi_eps, success, env_ret = [], [], []
+                   max_steps: int = 500, stop_after_success: int = 10, keep_windows: bool = False) -> dict:
+    """Standardized psi windows per episode (so ANY user can score the same rollouts later) + task metrics.
+
+    keep_windows=True also returns the raw observation / action windows of every episode (same windows as psi),
+    so a learned reward model can score the rollouts (exploitation diagnostic).
+    """
+    psi_eps, success, env_ret, obs_w, act_w = [], [], [], [], []
     for _ in range(n_episodes):
         ep = rollout(env, act_fn, max_steps, stop_after_success)
         psi_eps.append((episode_psi(ep, L, hand_slice, eps) - psi_mean) / psi_std)
         success.append(float(ep["success"].max())); env_ret.append(float(ep["rew"].sum()))
-    return dict(psi=psi_eps, success=np.asarray(success), env_return=np.asarray(env_ret))
+        if keep_windows:
+            idx = window_index(len(ep["rew"]), L)
+            obs_w.append(ep["obs"][idx]); act_w.append(ep["act"][idx])
+    out = dict(psi=psi_eps, success=np.asarray(success), env_return=np.asarray(env_ret))
+    if keep_windows:
+        out.update(obs_windows=obs_w, act_windows=act_w)
+    return out
 
 
 def score_users(psi_eps, V) -> np.ndarray:
