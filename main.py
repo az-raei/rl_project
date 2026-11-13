@@ -30,6 +30,7 @@ COMMANDS = {
     "querying": ("src.experiments.run_query_budget", ["users", "model", "query", "adapt", "exp"]),
     "heterogeneity": ("src.experiments.run_heterogeneity", ["users", "model", "query", "adapt", "exp"]),
     "report": ("src.experiments.report", ["users", "model", "query", "adapt", "exp"]),
+    "audit": ("src.experiments.audit_runs", ["users", "model", "query", "adapt", "exp"]),
     "iql": ("src.rl.run_iql", ["metaworld", "users", "model", "query", "adapt", "iql"]),
 }
 

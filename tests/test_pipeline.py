@@ -401,3 +401,52 @@ def test_report_spearman_and_seed_summary(tmp_path):
     report.run(cfg)
     assert (tdir / "summary_spearman_reach-v3.md").exists() and (tdir / "summary_seeds_reach-v3.md").exists()
     assert "Spearman" in (tdir / "summary_spearman_reach-v3.md").read_text()
+
+
+def test_strategy_comparison_is_paired_over_users():
+    from src.experiments import report
+    rows = []
+    for u, gain in ((1, 0.01), (2, 0.02), (3, 0.03), (4, 0.04)):
+        for strat, bonus in (("random", 0.0), ("ensemble_variance", gain)):
+            rows.append(dict(run="reach-v3_K16_transformer_seed0", l2="0.1", method="ours_pop_prior", strategy=strat,
+                             group="low", budget=10, user=u, acc_true=0.80 + 0.01 * u + bonus))
+    md = report.strategy_comparison(rows, "reach-v3", [10])
+    assert "+0.025 ± 0.006 (4/4)" in md and "ensemble_variance" in md
+    assert "No run has an active strategy" in report.strategy_comparison([r for r in rows if r["strategy"] == "random"], "t", [10])
+
+
+def test_audit_config_diff_classification_and_consistency_checks(tmp_path):
+    from src.experiments import audit_runs as A
+    base = load_config(["default", "users", "model"])
+    ref = dict(name="reach-v3_K16_transformer_seed0", cfg=base, history=[dict(step=1000, val_acc=0.77), dict(step=6000, val_acc=0.78)],
+               train_users=[0, 1, 2], weights="aaa", mtime=100.0)
+    same = dict(ref, name="reach-v3_K16_transformer_seed1", cfg=dict(base, seed=1), weights="bbb")
+    short = dict(ref, name="reach-v3_K16_transformer_seed2", weights="ccc", history=[dict(step=3000, val_acc=0.74)],
+                 cfg=deep_update(base, {"train": {"steps": 4000, "early_stop_patience": 3}}))
+    old = dict(ref, name="reach-v3_K16_transformer_seed3", weights="ddd", cfg=None)
+    dup = dict(ref, name="reach-v3_K16_transformer_seed4", weights="bbb", cfg=dict(base, seed=4))
+    rows = {r["name"]: r for r in A.audit_checkpoints([ref, same, short, old, dup])}
+    assert rows["reach-v3_K16_transformer_seed0"]["status"] == "reference"
+    assert rows["reach-v3_K16_transformer_seed1"]["status"] == "comparable"
+    r2 = rows["reach-v3_K16_transformer_seed2"]
+    assert r2["status"] == "partially comparable" and ("train.steps", 4000, base["train"]["steps"]) in r2["diffs"]
+    assert r2["stopped_early"] and rows["reach-v3_K16_transformer_seed3"]["status"] == "unverified"
+    assert rows["reach-v3_K16_transformer_seed4"]["duplicate_of"] == ["reach-v3_K16_transformer_seed1"]
+    assert A.diff_configs(base, dict(base, seed=9)) == []                                   # seed alone is not a difference
+    # data provenance is part of the verdict: different training users make a run non-comparable
+    other = dict(ref, name="reach-v3_K16_transformer_seed5", weights="eee", cfg=dict(base, seed=5), train_users=[0, 1, 3])
+    assert A.classify(other, ref)[0] == "partially comparable"
+    # adaptation provenance and evaluation consistency
+    hdr = tmp_path / "x_summary.txt"
+    hdr.write_text("[reach-v3] model reach-v3_K16_transformer_seed1.pt (ours-transformer-K16) | pool=20000 test pairs=5000 | seeds=5 l2=0.1\n")
+    h = A.parse_summary_header(hdr)
+    assert h["ckpt"].endswith("seed1.pt") and h["pool"] == "20000" and h["l2"] == "0.1"
+    def w(name, shift):
+        p = tmp_path / name
+        with open(p, "w", newline="") as f:
+            wr = csv.writer(f); wr.writerow(["user", "ceiling"]); [wr.writerow([u, 0.8 + 0.001 * u + shift]) for u in range(5)]
+        return p
+    a, b, c = w("a.csv", 0), w("b.csv", 0), w("c.csv", 0.01)
+    assert A.ceiling_mismatches([a, b]) == [] and A.ceiling_mismatches([a, c])[0][0] == "c.csv"
+    md = A.render(list(rows.values()), [], [("x_summary.txt", h)], A.ceiling_mismatches([a, c]))
+    assert "IDENTICAL WEIGHTS" in md and "partially comparable" in md and "c.csv" in md
