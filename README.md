@@ -1,106 +1,309 @@
 # Personalized Reward Features from Preference Feedback
 
-**Few-Shot Adaptation and Downstream Offline Reinforcement Learning in Meta-World**
+### Few-Shot Adaptation and Downstream Offline Reinforcement Learning in Meta-World
 
 ## Overview
 
-This project investigates learning shared reward representations from preference feedback and adapting them to individual users with limited preference queries.
+This project investigates personalized reward modeling from pairwise preference feedback. It explores whether a shared reward representation can be learned across multiple users and adapted to individual preferences using only a small number of preference queries.
 
-Instead of training a separate reward model for every user, we learn a shared temporal state-action encoder that produces a low-dimensional reward representation. Individual user preferences are then represented using lightweight user-specific weight vectors.
+Rather than training an independent reward model for every user, the proposed approach learns a shared temporal state-action encoder that produces low-dimensional reward features. Each user is represented by a lightweight preference-weight vector, allowing personalization without retraining the shared encoder.
 
-The framework is evaluated on the **Meta-World Reach-v3 and Pick-Place-v3 tasks**, using synthetic users with different behavioral preferences and levels of preference heterogeneity.
+The framework is evaluated using synthetic users in two Meta-World environments:
+
+- Reach-v3
+- Pick-Place-v3
+
+The project covers shared reward representation learning, few-shot personalization, architecture and feature-dimension ablations, preference acquisition strategies, reward recovery, and downstream offline reinforcement learning.
+
+## Research Objectives
+
+The project investigates five central questions:
+
+1. Can shared reward features support few-shot personalization across users with different preferences?
+2. How does the dimensionality of the learned reward representation affect adaptation?
+3. How important are temporal modeling and encoder architecture?
+4. Can active preference querying improve adaptation efficiency over random querying?
+5. Do improvements in preference prediction translate into better downstream reinforcement-learning policies?
 
 ## Methodology
 
-The proposed model learns a shared feature representation:
+### 1. Personalized Reward Representation
+
+The model learns a shared trajectory representation:
 
 \[
 \phi(\tau)\in\mathbb{R}^{K}
 \]
 
-where \(\tau\) denotes a trajectory and \(K\) is the reward feature dimension.
+where \(\tau\) represents a trajectory segment and \(K\) is the reward-feature dimension.
 
-A user-specific reward is calculated as:
+A personalized reward is computed as:
 
 \[
 R_u(\tau)=w_u^\top\phi(\tau)
 \]
 
 where:
-- \(\phi(\tau)\) is the shared learned trajectory representation.
-- \(w_u\) is the user-specific preference vector.
-- \(R_u(\tau)\) is the predicted reward for user \(u\).
+- \(\phi(\tau)\) is the shared learned representation.
+- \(w_u\) is the preference-weight vector for user \(u\).
+- \(R_u(\tau)\) is the predicted personalized reward.
 
-The shared encoder is frozen during few-shot user adaptation. Only the user-specific preference parameters are adapted using a limited number of preference comparisons.
+The encoder processes state-action sequences using separate state and action embeddings, followed by feature fusion and temporal modeling.
 
-### Main model configuration
+A per-step feature head produces \(\phi_t\), and segment features are obtained through temporal aggregation:
 
-| Parameter | Configuration |
-|---|---|
-| Encoder | Transformer |
-| Feature dimension (K) | 16 |
-| Model dimension | 128 |
-| Transformer layers | 2 |
-| Attention heads | 4 |
-| Dropout | 0.1 |
-| Maximum sequence length | 128 |
-| Batch size | 256 |
-| Learning rate | 3e-4 |
-| Weight decay | 1e-4 |
-| Training steps | 6,000 |
-| Gradient clipping | 1.0 |
+\[
+\phi(\tau)=\sum_t\phi_t
+\]
+
+This decomposition allows personalized rewards to be assigned at the individual time-step level for downstream offline RL.
+
+### 2. Shared Training
+
+The shared encoder and preference weights for training users are learned jointly using pairwise preference comparisons and a Bradley-Terry preference loss.
+
+The training setup uses:
+- 50 training users.
+- Held-out episodes for validation.
+- AdamW optimization.
+- Learning rate of \(3\times10^{-4}\).
+- Batch size of 256.
+- Up to 6,000 training steps.
+- Validation-based early stopping.
+
+### 3. Few-Shot User Adaptation
+
+For an unseen user, the shared encoder is frozen.
+
+The user-specific preference vector is estimated using ridge-regularized logistic regression over differences between trajectory feature vectors:
+
+\[
+\Delta\phi=\phi(\tau_i)-\phi(\tau_j)
+\]
+
+Adaptation uses a damped Newton optimization procedure.
+
+Two prior configurations are investigated:
+
+- **Population prior:** Shrinkage toward the mean training-user preference vector.
+- **Zero prior:** Shrinkage toward zero.
+
+The default regularization strength is \(l_2=0.1\).
 
 ## Experimental Setup
 
 ### Environments
-- Meta-World Reach-v3
-- Meta-World Pick-Place-v3
 
-### User heterogeneity
+| Environment | Description |
+|---|---|
+| Reach-v3 | Robotic reaching task |
+| Pick-Place-v3 | Robotic object manipulation task |
 
-Synthetic users are generated using six behavioral statistics. Users are grouped into:
+### Synthetic User Preferences
+
+User preferences are generated from six handcrafted behavioral statistics.
+
+Users are divided into three heterogeneity groups:
+
 - Low heterogeneity
 - Medium heterogeneity
 - High heterogeneity
 
-### Preference adaptation
+The high-heterogeneity group represents users whose preferences differ substantially from the training-user population.
 
-The model is evaluated under different preference-feedback budgets:
+Preferences are defined over 25-step trajectory segments, with duration based on time to first success.
 
-- B = 0
-- B = 5
-- B = 20
-- B = 100
+### Evaluation Metrics
 
-The primary evaluation metric is `acc_true`, measuring accuracy against the ground-truth preference labels.
+| Metric | Purpose |
+|---|---|
+| Preference accuracy (`acc_true`) | Measures agreement with noiseless ground-truth preferences |
+| Reward recovery (Spearman correlation) | Measures correlation between learned and ground-truth rewards |
+| Ground-truth policy reward | Evaluates downstream policy quality |
+| Learned-versus-true reward gap | Examines exploitation of learned reward-model errors |
 
-### Baselines
+## Experiments
 
-The experiments include:
-- **PrefMMT:** A pooled preference-model baseline using last-layer fine-tuning.
-- **StatsMLP:** A model receiving the behavioral statistics used in preference generation. This serves as a privileged, near-oracle reference rather than a directly comparable learned-model baseline.
+### 1. Baseline Comparison
 
-### Additional experiments
+The proposed shared reward-feature model is compared against:
 
-- Reward representation dimension ablations.
-- Temporal encoder ablations.
-- Encoder architecture comparisons.
-- Active versus random preference querying.
-- Downstream offline reinforcement learning using Implicit Q-Learning (IQL).
+**PrefMMT**
+- A pooled preference-model baseline.
+- Adaptation through last-layer fine-tuning.
+- Full-network fine-tuning is not implemented.
 
-## Results
+**Trajectory-Statistics MLP**
+- Receives the behavioral statistics used to generate preference labels.
+- Serves as a privileged, near-oracle reference rather than a directly comparable learned-model baseline.
 
-The five-training-seed Reach-v3 Transformer evaluation produced the following provisional aggregate results:
+**Psi-Linear**
+- A linear reference operating directly on the ground-truth behavioral statistics.
 
-| User group | B=0 | B=5 | B=20 | B=100 |
+The comparison evaluates how effectively the learned state-action representation recovers the information required for personalized preference prediction.
+
+### 2. Reward-Feature Dimension Ablation
+
+The effect of reward-feature dimensionality is investigated using:
+
+\[
+K\in\{4,8,16,32\}
+\]
+
+The experiment evaluates whether a smaller or larger reward representation improves few-shot adaptation.
+
+Key observation:
+- \(K=4\) performs substantially worse.
+- \(K=8,16,32\) achieve broadly comparable results.
+- \(K=16\) performs particularly well for high-heterogeneity users.
+- Smaller representations can be beneficial when preference labels are scarce.
+
+These findings are empirical observations for the evaluated task and dataset.
+
+### 3. Temporal Encoder Ablation
+
+The importance of temporal modeling is investigated by comparing:
+
+- Transformer encoder.
+- GRU encoder.
+- MLP without temporal context.
+- PrefMMT-style encoder within the proposed reward-feature framework.
+
+The experiments examine whether the gains come primarily from the shared reward-feature personalization mechanism or from a particular temporal architecture.
+
+The evaluated architectures achieve broadly similar performance, while removing temporal context generally reduces accuracy.
+
+### 4. Personalization Prior and Regularization Ablation
+
+The adaptation mechanism is evaluated using different regularization strengths:
+
+\[
+l_2\in\{0.1,1,10,100\}
+\]
+
+The experiments compare:
+- Population-centered regularization.
+- Zero-centered regularization.
+
+The purpose is to investigate the trade-off between adapting to individual preferences and retaining information from the training-user population.
+
+Key observations:
+- The two priors perform similarly at \(l_2=0.1\).
+- Stronger population priors can benefit low- and medium-heterogeneity users when labels are scarce.
+- Strong regularization can hinder adaptation for high-heterogeneity users.
+- No single regularization strength dominates across all groups.
+
+### 5. Random vs. Active Preference Querying
+
+The project investigates whether selecting informative preference comparisons improves adaptation efficiency.
+
+Three strategies are evaluated:
+
+**Random Querying**
+- Selects preference pairs randomly.
+
+**Ensemble Disagreement**
+- Uses disagreement between independently trained reward-model ensemble members.
+- Selects pairs with high variance in predicted preference probabilities.
+
+**Predictive Entropy**
+- Selects pairs with uncertain mean preference predictions.
+
+The experiments use nested preference budgets and a shared initial set of random queries.
+
+Key observation:
+
+Active querying does not demonstrate a consistent advantage over random querying in the evaluated setup. Ensemble disagreement sometimes performs worse, while entropy is generally comparable to or slightly better than random querying.
+
+The comparison is preliminary because the active strategies use fewer query orders than random querying, and the original ensemble included undertrained checkpoints.
+
+### 6. Reward Recovery Analysis
+
+Preference prediction accuracy alone does not establish whether the learned representation recovers the underlying reward structure.
+
+Reward recovery is therefore evaluated using Spearman rank correlation between:
+
+\[
+w_u^\top\phi(\tau)
+\]
+
+and
+
+\[
+v_u^\top\psi(\tau)
+\]
+
+where \(\psi(\tau)\) represents the ground-truth behavioral statistics.
+
+The evaluation considers:
+- Population reward without personalization.
+- Personalized reward with 5 labels.
+- Personalized reward with 20 labels.
+- Personalized reward with 100 labels.
+- A privileged linear reference using ground-truth features.
+
+The results show that reward recovery improves with additional preference feedback, particularly for high-heterogeneity users.
+
+### 7. Downstream Offline Reinforcement Learning
+
+The project evaluates whether personalized reward models can improve downstream policy learning.
+
+Implicit Q-Learning (IQL) is used to train policies on an offline dataset containing 1,200 collected episodes per task.
+
+The experiment compares reward variants:
+
+| Reward variant | Description |
+|---|---|
+| Personalized reward | User-specific reward estimated from preference feedback |
+| Population reward | Mean training-user reward without additional preference labels |
+| Pooled PrefMMT | Reward predicted by the pooled preference baseline |
+| Environment reward | Original Meta-World task reward |
+| Oracle reward | Ground-truth personalized reward |
+
+IQL uses:
+- Expectile parameter: 0.7
+- Inverse temperature: 3
+- Discount factor: 0.99
+- Two hidden layers of 256 units
+- 100,000 training steps
+
+Policies are evaluated using ground-truth user rewards over 10 rollout episodes.
+
+**Key findings:**
+- Personalized rewards improve policy performance over the population-reward baseline.
+- The personalized reward does not establish superiority over pooled PrefMMT.
+- Increasing the preference budget does not consistently improve downstream policy quality.
+- The oracle reward provides a useful reference, although IQL does not fully optimize even the exact reward in this setup.
+
+### 8. Learned Reward Exploitation Analysis
+
+An additional experiment investigates whether policies exploit errors in the learned reward model.
+
+Policies are evaluated using both:
+- The learned reward used during training.
+- The ground-truth reward of the corresponding user.
+
+The difference between these values measures the extent to which policies achieve high predicted rewards without achieving correspondingly high true rewards.
+
+The analysis shows that policies trained on learned rewards can obtain substantially higher learned reward values while retaining poor ground-truth performance.
+
+This demonstrates that improved preference prediction does not automatically guarantee reliable downstream policy optimization.
+
+Extrapolation beyond the offline dataset is a plausible explanation, although the experiments do not conclusively establish the cause.
+
+## Main Results
+
+The five-training-seed Reach-v3 Transformer evaluation uses \(K=16\) and the population prior.
+
+| User heterogeneity | B=0 | B=5 | B=20 | B=100 |
 |---|---:|---:|---:|---:|
 | Low | 0.866 | 0.804 | 0.849 | **0.886** |
 | Medium | 0.808 | 0.781 | 0.850 | **0.890** |
 | High | 0.513 | 0.689 | 0.803 | **0.855** |
 
-Values represent mean accuracy across five training seeds. Standard deviations are reported in the accompanying research report.
+Values are provisional five-seed means; standard deviations are reported in the accompanying technical report.
 
-At B=100, the proposed Transformer outperforms the pooled PrefMMT last-layer fine-tuning baseline across all three user groups.
+The four initially undertrained Transformer runs (seeds 1–4) were subsequently retrained for 6,000 steps using separate repair-tagged checkpoints. Their regenerated adaptation results were included in the updated analysis.
 
 ## Repository Structure
 
@@ -115,102 +318,108 @@ At B=100, the proposed Transformer outperforms the pooled PrefMMT last-layer fin
 ├── checkpoints/
 ├── results/
 │   └── tables/
+├── tests/
+├── scripts/
 ├── main.py
+├── HANDOFF.md
 └── README.md
 ```
 
-The repository is organized around configuration-driven experiments, model implementations, training and adaptation routines, checkpoints, and generated results.
+### Main Components
 
-## Running the Experiments
+| Component | Responsibility |
+|---|---|
+| `configs/` | Model and experiment configurations |
+| `src/models/` | Reward encoder and model implementations |
+| `src/training/` | Training, adaptation and evaluation routines |
+| `checkpoints/` | Saved model checkpoints |
+| `results/tables/` | Generated experiment results |
+| `scripts/` | Diagnostic and supporting scripts |
+| `tests/` | Project tests |
+| `main.py` | Experiment command-line interface |
+| `HANDOFF.md` | Detailed project implementation and module documentation |
 
-Run commands from the project root.
+## Running the Project
 
-### Display available commands
+### Requirements
+
+- Python
+- PyTorch
+- Meta-World
+- Dependencies specified by the project environment
+
+Install the dependencies using the project's dependency configuration.
+
+### Available Commands
+
+Run commands from the repository root.
 
 ```bash
 python main.py --help
 ```
 
-### Train the proposed model
+The experiment pipeline is organized into the following stages:
 
 ```bash
-python main.py train "tasks=[reach-v3]" seed=0 train.steps=6000
+python main.py collect
+python main.py pairs
+python main.py users
+python main.py train
+python main.py stats
+python main.py adapt
+python main.py iql
+python main.py report
 ```
 
-### Adapt to a user
-
-```bash
-python main.py adapt "tasks=[reach-v3]" seed=0
-```
-
-### Train multiple seeds
-
-```powershell
-foreach ($s in 0, 1, 2, 3, 4) {
-    python main.py train "tasks=[reach-v3]" seed=$s train.steps=6000
-    if ($LASTEXITCODE -ne 0) { break }
-
-    python main.py adapt "tasks=[reach-v3]" seed=$s
-    if ($LASTEXITCODE -ne 0) { break }
-}
-```
-
-### Run other experiment modules
-
-The CLI exposes the following experiment commands:
+Additional experiment modules:
 
 ```bash
 python main.py ablations
-python main.py audit
-python main.py baselines
-python main.py collect
-python main.py heterogeneity
-python main.py iql
-python main.py pairs
 python main.py querying
-python main.py report
-python main.py stats
-python main.py users
+python main.py heterogeneity
+python main.py baselines
+python main.py audit
 ```
 
-Use `python main.py <command> --help` where supported, and consult the configuration files for experiment-specific settings.
+The available commands and their configuration overrides can be inspected through the CLI help and `configs/`.
 
-## Checkpoints and Outputs
+### Run Tests
 
-- `checkpoints/` stores trained model checkpoints.
-- `results/tables/` stores generated experimental result tables.
-- `configs/` contains experiment and model configurations.
+```bash
+python tests/run_tests.py
+```
 
-Training runs use configuration-dependent identifiers, including task, feature dimension, encoder, pooling configuration and random seed.
+## Reproducibility
 
-## Reproducibility Notes
-
+- Experiments are configuration-driven.
+- Training checkpoints are saved under `checkpoints/`.
+- Generated result tables are saved under `results/tables/`.
 - Training seeds and adaptation/query seeds represent different sources of variability.
-- The original Transformer checkpoints for seeds 1–4 were discovered to be severely undertrained. These runs were subsequently retrained for the intended 6,000 steps using separate `repair`-tagged checkpoints.
-- The repaired checkpoints were used to regenerate the corresponding random-query adaptation results.
-- The original undertrained checkpoints should not be used as valid trained-model replications.
-- Five-seed aggregate results should be interpreted alongside the checkpoint and dataset provenance qualifications documented in the report.
+- Transformer seeds 1–4 were retrained after an initial checkpoint audit identified that the original runs had completed only 1–4 steps instead of the intended 6,000.
+- Repaired checkpoints use a separate `repair` tag to distinguish them from the original checkpoints.
+- The active-querying experiment retains a qualification because its original ensemble included undertrained checkpoints.
 
 ## Limitations
 
-- Active-querying results require qualification because the original ensemble included undertrained checkpoints.
-- Downstream IQL experiments have limited evaluation coverage, including a single training seed in the reported setup.
-- Several architecture and representation ablations use limited seeds and task coverage.
-- StatsMLP receives privileged behavioral statistics and should not be interpreted as an equivalent information-access baseline to the proposed model.
-- The PrefMMT comparison uses pooled last-layer fine-tuning rather than full-network fine-tuning.
+The project has several important limitations:
 
-## Research Report
+1. **Synthetic preferences:** Users are generated from six handcrafted behavioral statistics. The results do not establish personalization of arbitrary real human preferences.
+2. **Reward structure:** Ground-truth preferences are linear in the underlying behavioral statistics.
+3. **User distribution:** High-heterogeneity users deliberately differ from the training-user population, making adaptation an extrapolation challenge.
+4. **Baseline scope:** The pooled PrefMMT baseline uses last-layer fine-tuning rather than full-network fine-tuning.
+5. **Privileged reference:** The trajectory-statistics MLP receives the label-generating features and is therefore an upper reference.
+6. **Active querying:** Query-order counts are not fully balanced, and the original ensemble included undertrained checkpoints.
+7. **Offline RL coverage:** IQL evaluation is limited to Reach-v3, five users per group, one IQL seed and ten evaluation episodes.
+8. **Reward exploitation:** The cause of learned-reward exploitation is not conclusively established.
+9. **Ablation coverage:** Several architecture and feature-dimension experiments use limited training-seed coverage and are primarily evaluated on Reach-v3.
 
-See the accompanying research report for:
-- Detailed mathematical formulation.
-- Experimental methodology.
-- Baseline comparisons.
-- Few-shot adaptation results.
-- Ablation studies.
-- Active preference querying.
-- Downstream offline reinforcement learning.
-- Discussion and limitations.
+## References
 
-## Authors
+1. Zhao et al. *PrefMMT: Modeling Human Preferences in Preference-based Reinforcement Learning with Multimodal Transformers.* IROS 2025.
+2. Barreto et al. *Capturing Individual Human Preferences with Reward Features.* NeurIPS 2025.
+3. Kostrikov, Nair and Levine. *Offline Reinforcement Learning with Implicit Q-Learning.* ICLR 2022.
+4. Yu et al. *Meta-World: A Benchmark and Evaluation for Multi-Task and Meta Reinforcement Learning.* CoRL 2019.
 
-Developed as an academic research project on personalized reward modeling and preference-based reinforcement learning by Bonta Aalaya and Vaishnavi Nitin Pawar
+## Project Report
+
+Refer to the accompanying technical report for detailed mathematical formulations, experiment configurations, numerical comparisons, ablation tables, reward recovery results, and downstream policy evaluations.
